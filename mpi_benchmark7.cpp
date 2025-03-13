@@ -7,9 +7,9 @@
 #include <boost/mpi/packed_iarchive.hpp>
 
 
-#define DEFAULT_OUTER_SIZE 20
-#define DEFAULT_INNER_SIZE 100 // Utilisé comme base, mais chaque sous-vecteur aura une taille variable
-#define NUM_ITERATIONS 10000
+#define DEFAULT_OUTER_SIZE 10
+#define DEFAULT_INNER_SIZE 1 // Utilisé comme base, mais chaque sous-vecteur aura une taille variable
+#define NUM_ITERATIONS 1000
 
 struct VectorOfVectors {
     std::vector<std::vector<int>> data;
@@ -19,7 +19,9 @@ struct VectorOfVectors {
         data.resize(DEFAULT_OUTER_SIZE);
         for (int i = 0; i < DEFAULT_OUTER_SIZE; i++) {
             // Tailles variables : par exemple, INNER_SIZE + i pour différencier
-            data[i].resize(DEFAULT_INNER_SIZE + i * i * i, 0);
+            data[i].resize(DEFAULT_INNER_SIZE + i * i * i * i, 0);
+//            data[i].resize(DEFAULT_INNER_SIZE, 0);
+
         }
     }
 
@@ -97,6 +99,62 @@ void benchmark_raw_mpi_vector(int rank, int size, int num_iterations) {
     }
 }
 
+
+// Benchmark avec MPI Bcast
+void benchmark_bcast_mpi_vector(int rank, int size, int num_iterations) {
+	VectorOfVectors vec ; 
+	if (rank == 0) {
+	    int outer_size = vec.data.size();
+	    std::vector<int> inner_sizes(outer_size);
+	    for (int j = 0; j < outer_size; j++) {
+	        inner_sizes[j] = vec.data[j].size();
+	    }
+	
+	    for (int i = 0; i < num_iterations; i++) {
+	        // Diffusion de outer_size et inner_sizes
+	        MPI_Bcast(&outer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	        MPI_Bcast(inner_sizes.data(), outer_size, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	        // Diffusion asynchrone des sous-vecteurs
+	        std::vector<MPI_Request> requests;
+	        for (int j = 0; j < outer_size; j++) {
+	            MPI_Request req;
+	            MPI_Ibcast(vec.data[j].data(), inner_sizes[j], MPI_INT, 0, MPI_COMM_WORLD, &req);
+	            requests.push_back(req);
+	        }
+	        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+	    }
+	
+	    int ack;
+	    for (int dest = 1; dest < size; dest++) {
+	        MPI_Recv(&ack, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    }
+	}
+	else {
+	    VectorOfVectors vec(0);
+	    for (int i = 0; i < num_iterations; i++) {
+	        int outer_size;
+	        // Réception implicite via Bcast
+	        MPI_Bcast(&outer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	        std::vector<int> inner_sizes(outer_size);
+	        MPI_Bcast(inner_sizes.data(), outer_size, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	        vec.data.resize(outer_size);
+	        std::vector<MPI_Request> requests;
+	        for (int j = 0; j < outer_size; j++) {
+	            vec.data[j].resize(inner_sizes[j]);
+	            MPI_Request req;
+	            MPI_Ibcast(vec.data[j].data(), inner_sizes[j], MPI_INT, 0, MPI_COMM_WORLD, &req);
+	            requests.push_back(req);
+	        }
+	        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+	    }
+	    int ack = 1;
+		   MPI_Send(&ack, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+		
+	}
+}
+
 // Benchmark avec MPI Pack/Unpack
 void benchmark_pack_mpi_vector(int rank, int size, int num_iterations) {
     VectorOfVectors vec; // Émetteur initialise avec tailles variables
@@ -128,13 +186,11 @@ void benchmark_pack_mpi_vector(int rank, int size, int num_iterations) {
             for (int j = 0; j < outer_size; j++) {
                 MPI_Pack(vec.data[j].data(), inner_sizes[j], MPI_INT, buffer.data(), total_size, &position, MPI_COMM_WORLD);
             }
-	    for (int dest = 1 ; dest < size ; dest++){
 		    MPI_Request req1, req2;
-	            MPI_Isend(&position, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, &req1);
+		    MPI_Ibcast(&position, 1, MPI_INT, 0, MPI_COMM_WORLD, &req1);
 		    requests.push_back(req1);
-	            MPI_Isend(buffer.data(), position, MPI_PACKED, dest, 1, MPI_COMM_WORLD, &req2);
+	            MPI_Ibcast(buffer.data(), position, MPI_PACKED, 0, MPI_COMM_WORLD, &req2);
 		    requests.push_back(req2);
-	    }
 	    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
         }
         int ack;
@@ -147,10 +203,10 @@ void benchmark_pack_mpi_vector(int rank, int size, int num_iterations) {
         for (int i = 0; i < num_iterations; i++) {
             int packed_size;
 	    MPI_Request req1, req2;
-            MPI_Irecv(&packed_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &req1);
+            MPI_Ibcast(&packed_size, 1, MPI_INT, 0, MPI_COMM_WORLD, &req1);
 	    MPI_Wait(&req1, MPI_STATUS_IGNORE);
             std::vector<char> buffer(packed_size);
-            MPI_Irecv(buffer.data(), packed_size, MPI_PACKED, 0, 1, MPI_COMM_WORLD, &req2);
+            MPI_Ibcast(buffer.data(), packed_size, MPI_PACKED, 0, MPI_COMM_WORLD, &req2);
 	    MPI_Wait(&req2, MPI_STATUS_IGNORE);
 
             int position = 0;
@@ -405,6 +461,13 @@ int main(int argc, char** argv) {
     benchmark_raw_mpi_vector(rank, size, NUM_ITERATIONS);
     end = MPI_Wtime();
     if (rank == 0) std::cout << "Raw MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_bcast_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Bcast MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
 
     MPI_Barrier(MPI_COMM_WORLD);
     start = MPI_Wtime();
