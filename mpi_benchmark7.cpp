@@ -331,7 +331,7 @@ void benchmark_boost_packed_mpi_vector(int rank, int size, int num_iterations) {
             boost::mpi::packed_oarchive oa(world, buffer);
             oa << vec;
             for (int dest = 1 ; dest < size ; dest++){
-                    world.isend(dest, 0, buffer);
+                    world.send(dest, 0, buffer);
             }
         }
         int ack;
