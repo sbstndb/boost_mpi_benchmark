@@ -9,3 +9,18 @@ add_executable(mpi_benchmark mpi_benchmark.cpp)
 target_include_directories(mpi_benchmark PUBLIC ${MPI_CXX_INCLUDE_DIRS})
 target_link_libraries(mpi_benchmark PUBLIC ${MPI_CXX_LIBRARIES} Boost::mpi Boost::serialization)
 
+add_executable(mpi_benchmark2 mpi_benchmark2.cpp)
+target_include_directories(mpi_benchmark2 PUBLIC ${MPI_CXX_INCLUDE_DIRS})
+target_link_libraries(mpi_benchmark2 PUBLIC ${MPI_CXX_LIBRARIES} Boost::mpi Boost::serialization)
+
+
+add_executable(mpi_benchmark3 mpi_benchmark3.cpp)
+target_include_directories(mpi_benchmark3 PUBLIC ${MPI_CXX_INCLUDE_DIRS})
+target_link_libraries(mpi_benchmark3 PUBLIC ${MPI_CXX_LIBRARIES} Boost::mpi Boost::serialization)
+
+
+add_executable(mpi_benchmark4 mpi_benchmark4.cpp)
+target_include_directories(mpi_benchmark4 PUBLIC ${MPI_CXX_INCLUDE_DIRS})
+target_link_libraries(mpi_benchmark4 PUBLIC ${MPI_CXX_LIBRARIES} Boost::mpi Boost::serialization)
+
+
