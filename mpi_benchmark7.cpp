@@ -9,7 +9,7 @@
 
 #define DEFAULT_OUTER_SIZE 10
 #define DEFAULT_INNER_SIZE 1 // Utilisé comme base, mais chaque sous-vecteur aura une taille variable
-#define NUM_ITERATIONS 1000
+#define NUM_ITERATIONS 10000
 
 struct VectorOfVectors {
     std::vector<std::vector<int>> data;
@@ -298,10 +298,9 @@ void benchmark_boost_mpi_vector(int rank, int size, int num_iterations) {
     VectorOfVectors vec; // Émetteur initialise avec tailles variables
 
     if (rank == 0) {
-        double start = MPI_Wtime();
         for (int i = 0; i < num_iterations; i++) {
 	    for (int dest = 1 ; dest < size ; dest++){
-	            world.isend(dest, 0, vec);
+	            world.send(dest, 0, vec);
 	    }
         }
         int ack;
