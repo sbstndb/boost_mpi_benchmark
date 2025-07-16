@@ -1,266 +1,348 @@
-
 #include <iostream>
 #include <vector>
 #include <mpi.h>
-
-
 #include <boost/mpi.hpp>
-#include <boost/serialization/serialization.hpp>
-
-struct SimpleData{
-	int a; 
-	double b;
-	double values[100] ; 
-	double values2[100]; 
-        double values3[100];	
-        double values4[100];
-        double values5[100];
-        double values6[100];
+#include <boost/serialization/vector.hpp>
+#include <boost/mpi/packed_oarchive.hpp>
+#include <boost/mpi/packed_iarchive.hpp>
 
 
+#define DEFAULT_OUTER_SIZE 10
+#define DEFAULT_INNER_SIZE 1 // Utilisé comme base, mais chaque sous-vecteur aura une taille variable
+#define NUM_ITERATIONS 10000
 
-	template <class Archive>
-		void serialize(Archive & ar, const unsigned int){
-			ar & a ; 
-			ar & b ; 
-			ar & values ; 
-			ar & values2 ; 
-                        ar & values3 ;
-                        ar & values4 ;
-                        ar & values5 ;
-                        ar & values6 ;
-		}
-};
- //Structure dérivée pour MPI_Datatype
-struct SimpleDataType : public SimpleData {
-   // Pas besoin de redéfinir serialize, elle est héritée
-};
+struct VectorOfVectors {
+    std::vector<std::vector<int>> data;
 
+    // Constructeur avec tailles variables pour l'émetteur
+    VectorOfVectors() {
+        data.resize(DEFAULT_OUTER_SIZE);
+        for (int i = 0; i < DEFAULT_OUTER_SIZE; i++) {
+            // Tailles variables : par exemple, INNER_SIZE + i pour différencier
+            data[i].resize(DEFAULT_INNER_SIZE + i * i * i * i, 0);
+//            data[i].resize(DEFAULT_INNER_SIZE, 0);
 
+        }
+    }
 
+    // Constructeur par défaut pour le récepteur
+    VectorOfVectors(int) : data() {}
 
-
-// Spécialisation pour indiquer que SimpleData est un MPI_Datatype
-namespace boost {
-namespace mpi {
-template <>
-struct is_mpi_datatype<SimpleDataType> : public mpl::true_ {};
-} // namespace mpi
-} // namespace boost
-
-
-struct VectorData {
-	std::vector<int> vec ; 
+    template <class Archive>
+    void serialize(Archive & ar, const unsigned int) {
+        ar & data;
+    }
 };
 
+// Benchmark avec MPI Send/Recv brut
+void benchmark_raw_mpi_vector(int rank, int size, int num_iterations) {
+    VectorOfVectors vec; // Émetteur initialise avec tailles variables
 
-struct ArrayData{
-	int id ; 
-	double values[1000] ; 
-};
+    if (rank == 0) {
+        int outer_size = vec.data.size();
+        std::vector<int> inner_sizes(outer_size);
+        for (int j = 0; j < outer_size; j++) {
+            inner_sizes[j] = vec.data[j].size();
+        }
+
+        for (int i = 0; i < num_iterations; i++) {
+	    std::vector<MPI_Request> requests;
+            // Envoi de outer_size
+	    for( int dest = 1 ; dest < size ; dest++){
+		    MPI_Request req1, req2;
+	            MPI_Isend(&outer_size, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, &req1);
+		    requests.push_back(req1) ; 
+	            // Envoi des tailles de chaque sous-vecteur
+	            MPI_Isend(inner_sizes.data(), outer_size, MPI_INT, dest, 1, MPI_COMM_WORLD, &req2);
+		    requests.push_back(req2);
+	            // Envoi des données
+	            for (int j = 0; j < outer_size; j++) {
+			MPI_Request req3 ; 
+	                MPI_Isend(vec.data[j].data(), inner_sizes[j], MPI_INT, dest, 2 + j, MPI_COMM_WORLD, &req3);
+			requests.push_back(req3) ; 
+	            }
+	    }
+	    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        }
+        int ack;
+	for (int dest = 1 ; dest < size ; dest++){
+	        MPI_Recv(&ack, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
+    }
+    else  {
+        VectorOfVectors vec(0); // Récepteur n'initialise pas à l'avance
+        for (int i = 0; i < num_iterations; i++) {
+	    std::vector<MPI_Request> requests;
+            int outer_size;
+	    MPI_Request req1, req2;
+
+            MPI_Irecv(&outer_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &req1);
+	    MPI_Wait(&req1, MPI_STATUS_IGNORE);
+            std::vector<int> inner_sizes(outer_size);
+
+            MPI_Irecv(inner_sizes.data(), outer_size, MPI_INT, 0, 1, MPI_COMM_WORLD, &req2);
+
+            vec.data.resize(outer_size);
+	    MPI_Wait(&req2, MPI_STATUS_IGNORE);
+            for (int j = 0; j < outer_size; j++) {
+		MPI_Request req ; 
+                vec.data[j].resize(inner_sizes[j]);
+
+                MPI_Irecv(vec.data[j].data(), inner_sizes[j], MPI_INT, 0, 2 + j, MPI_COMM_WORLD, &req);
+		requests.push_back(req);
+            }
+	    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+
+        }
+        int ack = 1;
+        MPI_Send(&ack, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+    }
+}
 
 
-void benchmark_raw_mpi_simple(int rank, int size, int num_iterations){
-	SimpleData data; 
-	if (rank == 0){
-		for (int i = 0 ; i < num_iterations; i++){
-			MPI_Send(&data.a, 1, MPI_INT, 1, 0, MPI_COMM_WORLD);
-			MPI_Send(&data.b, 1, MPI_DOUBLE, 1, 1, MPI_COMM_WORLD);
-			MPI_Send(data.values, 100, MPI_DOUBLE, 1, 2, MPI_COMM_WORLD);
-                        MPI_Send(data.values2, 100, MPI_DOUBLE, 1, 3, MPI_COMM_WORLD);
-                        MPI_Send(data.values3, 100, MPI_DOUBLE, 1, 4, MPI_COMM_WORLD);
-                        MPI_Send(data.values4, 100, MPI_DOUBLE, 1, 5, MPI_COMM_WORLD);
-                        MPI_Send(data.values5, 100, MPI_DOUBLE, 1, 6, MPI_COMM_WORLD);
-                        MPI_Send(data.values6, 100, MPI_DOUBLE, 1, 7, MPI_COMM_WORLD);
-
-
-
-		}
-		int ack ; 
-	       MPI_Recv(&ack, 1, MPI_INT, 1, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	}	
-	else if (rank == 1){
-		for (int i = 0 ; i < num_iterations; i++){
-                        MPI_Recv(&data.a, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        MPI_Recv(&data.b, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);		
-			MPI_Recv(data.values, 100, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        MPI_Recv(data.values2, 100, MPI_DOUBLE, 0, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        MPI_Recv(data.values3, 100, MPI_DOUBLE, 0, 4, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        MPI_Recv(data.values4, 100, MPI_DOUBLE, 0, 5, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        MPI_Recv(data.values5, 100, MPI_DOUBLE, 0, 6, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        MPI_Recv(data.values6, 100, MPI_DOUBLE, 0, 7, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		}
-	        int ack = 1;
-	        MPI_Send(&ack, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
+// Benchmark avec MPI Bcast
+void benchmark_bcast_mpi_vector(int rank, int size, int num_iterations) {
+	VectorOfVectors vec ; 
+	if (rank == 0) {
+	    int outer_size = vec.data.size();
+	    std::vector<int> inner_sizes(outer_size);
+	    for (int j = 0; j < outer_size; j++) {
+	        inner_sizes[j] = vec.data[j].size();
+	    }
+	
+	    for (int i = 0; i < num_iterations; i++) {
+	        // Diffusion de outer_size et inner_sizes
+	        MPI_Bcast(&outer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	        MPI_Bcast(inner_sizes.data(), outer_size, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	        // Diffusion asynchrone des sous-vecteurs
+	        std::vector<MPI_Request> requests;
+	        for (int j = 0; j < outer_size; j++) {
+	            MPI_Request req;
+	            MPI_Ibcast(vec.data[j].data(), inner_sizes[j], MPI_INT, 0, MPI_COMM_WORLD, &req);
+	            requests.push_back(req);
+	        }
+	        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+	    }
+	
+	    int ack;
+	    for (int dest = 1; dest < size; dest++) {
+	        MPI_Recv(&ack, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    }
+	}
+	else {
+	    VectorOfVectors vec(0);
+	    for (int i = 0; i < num_iterations; i++) {
+	        int outer_size;
+	        // Réception implicite via Bcast
+	        MPI_Bcast(&outer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	        std::vector<int> inner_sizes(outer_size);
+	        MPI_Bcast(inner_sizes.data(), outer_size, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	        vec.data.resize(outer_size);
+	        std::vector<MPI_Request> requests;
+	        for (int j = 0; j < outer_size; j++) {
+	            vec.data[j].resize(inner_sizes[j]);
+	            MPI_Request req;
+	            MPI_Ibcast(vec.data[j].data(), inner_sizes[j], MPI_INT, 0, MPI_COMM_WORLD, &req);
+	            requests.push_back(req);
+	        }
+	        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+	    }
+	    int ack = 1;
+		   MPI_Send(&ack, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+		
 	}
 }
 
-void benchmark_pack_mpi_simple(int rank, int size, int num_iterations) {
-    SimpleData data;
-
-    // Calcul des tailles nécessaires pour chaque membre avec MPI_Pack_size
-    int int_pack_size;
-    MPI_Pack_size(1, MPI_INT, MPI_COMM_WORLD, &int_pack_size);
-
-    int double_pack_size;
-    MPI_Pack_size(1, MPI_DOUBLE, MPI_COMM_WORLD, &double_pack_size);
-
-    int array1_pack_size;
-    MPI_Pack_size(100, MPI_DOUBLE, MPI_COMM_WORLD, &array1_pack_size);
-
-    int array2_pack_size;
-    MPI_Pack_size(100, MPI_DOUBLE, MPI_COMM_WORLD, &array2_pack_size);
-
-    int array3_pack_size;
-    MPI_Pack_size(100, MPI_DOUBLE, MPI_COMM_WORLD, &array3_pack_size);
-
-    int array4_pack_size;
-    MPI_Pack_size(100, MPI_DOUBLE, MPI_COMM_WORLD, &array4_pack_size);
-
-    int array5_pack_size;
-    MPI_Pack_size(100, MPI_DOUBLE, MPI_COMM_WORLD, &array5_pack_size);
-
-    int array6_pack_size;
-    MPI_Pack_size(100, MPI_DOUBLE, MPI_COMM_WORLD, &array6_pack_size);    
-
-    // Taille totale du tampon
-    int total_size = int_pack_size + double_pack_size + array1_pack_size + array2_pack_size + array3_pack_size + array4_pack_size + array5_pack_size + array6_pack_size;
-
-    // Allocation d'un tampon dynamique avec std::vector
-    std::vector<char> buffer(total_size);
+// Benchmark avec MPI Pack/Unpack
+void benchmark_pack_mpi_vector(int rank, int size, int num_iterations) {
+    VectorOfVectors vec; // Émetteur initialise avec tailles variables
 
     if (rank == 0) {
-        // Émetteur
-        for (int i = 0; i < num_iterations; i++) {
-            int position = 0;
-
-            // Packing de chaque membre dans le tampon
-            MPI_Pack(&data.a, 1, MPI_INT, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(&data.b, 1, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(data.values, 100, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(data.values2, 100, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(data.values3, 100, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(data.values4, 100, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(data.values5, 100, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-            MPI_Pack(data.values6, 100, MPI_DOUBLE, buffer.data(), total_size, &position, MPI_COMM_WORLD);
-
-            // Envoi du tampon packé
-            MPI_Send(buffer.data(), position, MPI_PACKED, 1, 0, MPI_COMM_WORLD);
+        int outer_size = vec.data.size();
+        std::vector<int> inner_sizes(outer_size);
+        int total_elements = 0;
+        for (int j = 0; j < outer_size; j++) {
+            inner_sizes[j] = vec.data[j].size();
+            total_elements += inner_sizes[j];
         }
 
-        // Réception de l'accusé de réception
-        int ack;
-        MPI_Recv(&ack, 1, MPI_INT, 1, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    }
-    else if (rank == 1) {
-        // Récepteur
+        // Calcul de la taille du buffer
+        int int_pack_size;
+        MPI_Pack_size(1, MPI_INT, MPI_COMM_WORLD, &int_pack_size);
+        int sizes_pack_size;
+        MPI_Pack_size(outer_size, MPI_INT, MPI_COMM_WORLD, &sizes_pack_size);
+        int data_pack_size;
+        MPI_Pack_size(total_elements, MPI_INT, MPI_COMM_WORLD, &data_pack_size);
+        int total_size = int_pack_size + sizes_pack_size + data_pack_size;
+        std::vector<char> buffer(total_size);
+
         for (int i = 0; i < num_iterations; i++) {
-            // Réception du tampon packé
-            MPI_Recv(buffer.data(), total_size, MPI_PACKED, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    std::vector<MPI_Request> requests;
+            int position = 0;
+            MPI_Pack(&outer_size, 1, MPI_INT, buffer.data(), total_size, &position, MPI_COMM_WORLD);
+            MPI_Pack(inner_sizes.data(), outer_size, MPI_INT, buffer.data(), total_size, &position, MPI_COMM_WORLD);
+            for (int j = 0; j < outer_size; j++) {
+                MPI_Pack(vec.data[j].data(), inner_sizes[j], MPI_INT, buffer.data(), total_size, &position, MPI_COMM_WORLD);
+            }
+		    MPI_Request req1, req2;
+		    MPI_Ibcast(&position, 1, MPI_INT, 0, MPI_COMM_WORLD, &req1);
+		    requests.push_back(req1);
+	            MPI_Ibcast(buffer.data(), position, MPI_PACKED, 0, MPI_COMM_WORLD, &req2);
+		    requests.push_back(req2);
+	    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        }
+        int ack;
+	for (int dest = 1 ; dest < size ; dest++){
+	        MPI_Recv(&ack, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
+    }
+    else  {
+        VectorOfVectors vec(0); // Récepteur n'initialise pas à l'avance
+        for (int i = 0; i < num_iterations; i++) {
+            int packed_size;
+	    MPI_Request req1, req2;
+            MPI_Ibcast(&packed_size, 1, MPI_INT, 0, MPI_COMM_WORLD, &req1);
+	    MPI_Wait(&req1, MPI_STATUS_IGNORE);
+            std::vector<char> buffer(packed_size);
+            MPI_Ibcast(buffer.data(), packed_size, MPI_PACKED, 0, MPI_COMM_WORLD, &req2);
+	    MPI_Wait(&req2, MPI_STATUS_IGNORE);
 
             int position = 0;
+            int outer_size;
+            MPI_Unpack(buffer.data(), packed_size, &position, &outer_size, 1, MPI_INT, MPI_COMM_WORLD);
 
-            // Unpacking de chaque membre dans la structure
-            MPI_Unpack(buffer.data(), total_size, &position, &data.a, 1, MPI_INT, MPI_COMM_WORLD);
-            MPI_Unpack(buffer.data(), total_size, &position, &data.b, 1, MPI_DOUBLE, MPI_COMM_WORLD);
-            MPI_Unpack(buffer.data(), total_size, &position, data.values, 100, MPI_DOUBLE, MPI_COMM_WORLD);
-            MPI_Unpack(buffer.data(), total_size, &position, data.values2, 100, MPI_DOUBLE, MPI_COMM_WORLD);
-            MPI_Unpack(buffer.data(), total_size, &position, data.values3, 100, MPI_DOUBLE, MPI_COMM_WORLD);
-            MPI_Unpack(buffer.data(), total_size, &position, data.values4, 100, MPI_DOUBLE, MPI_COMM_WORLD)	    ;
-            MPI_Unpack(buffer.data(), total_size, &position, data.values5, 100, MPI_DOUBLE, MPI_COMM_WORLD);
-            MPI_Unpack(buffer.data(), total_size, &position, data.values6, 100, MPI_DOUBLE, MPI_COMM_WORLD)	    ;
+            std::vector<int> inner_sizes(outer_size);
+            MPI_Unpack(buffer.data(), packed_size, &position, inner_sizes.data(), outer_size, MPI_INT, MPI_COMM_WORLD);
+
+            vec.data.resize(outer_size);
+            for (int j = 0; j < outer_size; j++) {
+                vec.data[j].resize(inner_sizes[j]);
+                MPI_Unpack(buffer.data(), packed_size, &position, vec.data[j].data(), inner_sizes[j], MPI_INT, MPI_COMM_WORLD);
+            }
         }
-
-        // Envoi de l'accusé de réception
         int ack = 1;
-        MPI_Send(&ack, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
+        MPI_Send(&ack, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
     }
 }
 
-
-void benchmark_datatype_mpi_simple(int rank, int size, int num_iterations) {
-    SimpleData data;
-
-    // Définition du type de données MPI pour SimpleData
-    int block_lengths[4] = {1, 1, 100, 100}; // Longueurs des blocs
-    MPI_Aint displacements[4];                // Déplacements des blocs en octets
-    MPI_Datatype types[4] = {MPI_INT, MPI_DOUBLE, MPI_DOUBLE, MPI_DOUBLE}; // Types MPI des blocs
-
-    // Calcul des déplacements avec offsetof
-    displacements[0] = 0;                         // a est au début
-    displacements[1] = offsetof(SimpleData, b);   // Déplacement de b
-    displacements[2] = offsetof(SimpleData, values); // Déplacement de values
-    displacements[3] = offsetof(SimpleData, values2); // Déplacement de values2
-
-    // Création et validation du type MPI
-    MPI_Datatype simpledata_type;
-    MPI_Type_create_struct(4, block_lengths, displacements, types, &simpledata_type);
-    MPI_Type_commit(&simpledata_type);
+// Benchmark avec MPI Datatype
+void benchmark_datatype_mpi_vector(int rank, int size, int num_iterations) {
+    VectorOfVectors vec; // Émetteur initialise avec tailles variables
 
     if (rank == 0) {
-        // Envoi de la structure entière pour chaque itération
-        for (int i = 0; i < num_iterations; i++) {
-            MPI_Send(&data, 1, simpledata_type, 1, 0, MPI_COMM_WORLD);
+        int outer_size = vec.data.size();
+        std::vector<int> inner_sizes(outer_size);
+        for (int j = 0; j < outer_size; j++) {
+            inner_sizes[j] = vec.data[j].size();
         }
-        // Réception de l'accusé de réception
-        int ack;
-        MPI_Recv(&ack, 1, MPI_INT, 1, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    }
-    else if (rank == 1) {
-        // Réception de la structure entière pour chaque itération
+
         for (int i = 0; i < num_iterations; i++) {
-            MPI_Recv(&data, 1, simpledata_type, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-        // Envoi de l'accusé de réception
-        int ack = 1;
-        MPI_Send(&ack, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
-    }
+	    std::vector<MPI_Request> requests;
+            // Envoi de outer_size et inner_sizes
+	    for (int dest = 1 ; dest < size ; dest++){
+		    MPI_Request req1, req2; 
+	            MPI_Isend(&outer_size, 1, MPI_INT, dest, 0, MPI_COMM_WORLD,&req1);
+	            MPI_Isend(inner_sizes.data(), outer_size, MPI_INT, dest, 1, MPI_COMM_WORLD, &req2);
+		    requests.push_back(req1) ; 
+		    requests.push_back(req2);
+	    }
 
-    // Libération du type MPI
-    MPI_Type_free(&simpledata_type);
-}
-
-
-void benchmark_boost_mpi_simple(int num_iterations) {
-    boost::mpi::communicator world;  
-    int rank = world.rank();
-    SimpleData data;
-
-
-    if (rank == 0) {
-        double start = MPI_Wtime(); 
-        for (int i = 0; i < num_iterations; ++i) {
-            world.send(1, 0, data); 
+            // Création et envoi des données avec types dérivés pour chaque sous-vecteur
+            for (int j = 0; j < outer_size; j++) {
+                MPI_Datatype inner_type;
+                MPI_Type_contiguous(inner_sizes[j], MPI_INT, &inner_type);
+                MPI_Type_commit(&inner_type);
+		for (int dest = 1 ; dest < size ; dest++){
+			MPI_Request req ;
+	                MPI_Isend(vec.data[j].data(), 1, inner_type, dest, 2 + j, MPI_COMM_WORLD, &req);
+			requests.push_back(req) ; 
+		}
+                MPI_Type_free(&inner_type);
+            }
+	    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
         }
         int ack;
-        world.recv(1, 1, ack);  
-        double end = MPI_Wtime();
-    } else if (rank == 1) {
-        for (int i = 0; i < num_iterations; ++i) {
-            world.recv(0, 0, data);
+	for (int dest = 1 ; dest < size ; dest++){
+	        MPI_Recv(&ack, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
+    }
+    else  {
+        VectorOfVectors vec(0); // Récepteur n'initialise pas à l'avance
+        for (int i = 0; i < num_iterations; i++) {
+            int outer_size;
+            MPI_Recv(&outer_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            std::vector<int> inner_sizes(outer_size);
+            MPI_Recv(inner_sizes.data(), outer_size, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            vec.data.resize(outer_size);
+            for (int j = 0; j < outer_size; j++) {
+                MPI_Datatype inner_type;
+                MPI_Type_contiguous(inner_sizes[j], MPI_INT, &inner_type);
+                MPI_Type_commit(&inner_type);
+                vec.data[j].resize(inner_sizes[j]);
+                MPI_Recv(vec.data[j].data(), 1, inner_type, 0, 2 + j, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                MPI_Type_free(&inner_type);
+            }
         }
         int ack = 1;
-        world.send(0, 1, ack); 
+        MPI_Send(&ack, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
     }
 }
 
-
-void benchmark_boost_datatype_mpi_simple(int num_iterations) {
+// Benchmark avec Boost MPI
+void benchmark_boost_mpi_vector(int rank, int size, int num_iterations) {
     boost::mpi::communicator world;
-    int rank = world.rank();
-    SimpleDataType data;
+    VectorOfVectors vec; // Émetteur initialise avec tailles variables
+
+    if (rank == 0) {
+        for (int i = 0; i < num_iterations; i++) {
+	    for (int dest = 1 ; dest < size ; dest++){
+	            world.send(dest, 0, vec);
+	    }
+        }
+        int ack;
+	for (int dest = 1 ; dest < size ; dest++){
+	        world.recv(dest, 1, ack);
+	}
+    }
+    else   {
+        VectorOfVectors vec(0); // Récepteur n'initialise pas à l'avance
+        for (int i = 0; i < num_iterations; i++) {
+            world.recv(0, 0, vec); // Boost gère automatiquement les tailles variables
+        }
+        int ack = 1;
+        world.send(0, 1, ack);
+    }
+}
+
+
+// Benchmark avec Boost MPI
+void benchmark_boost_packed_mpi_vector(int rank, int size, int num_iterations) {
+    boost::mpi::communicator world;
+    VectorOfVectors vec; // Émetteur initialise avec tailles variables
 
     if (rank == 0) {
         double start = MPI_Wtime();
-        for (int i = 0; i < num_iterations; ++i) {
-            world.send(1, 0, data);
+        for (int i = 0; i < num_iterations; i++) {
+	    boost::mpi::packed_oarchive::buffer_type buffer;
+            boost::mpi::packed_oarchive oa(world, buffer);
+            oa << vec;
+            for (int dest = 1 ; dest < size ; dest++){
+                    world.send(dest, 0, buffer);
+            }
         }
         int ack;
-        world.recv(1, 1, ack);
-        double end = MPI_Wtime();
-    } else if (rank == 1) {
-        for (int i = 0; i < num_iterations; ++i) {
-            world.recv(0, 0, data);
+        for (int dest = 1 ; dest < size ; dest++){
+                world.recv(dest, 1, ack);
+        }
+    }
+    else   {
+        VectorOfVectors vec(0); // Récepteur n'initialise pas à l'avance
+        for (int i = 0; i < num_iterations; i++) {
+            world.recv(0, 0, vec); // Boost gère automatiquement les tailles variables
         }
         int ack = 1;
         world.send(0, 1, ack);
@@ -269,59 +351,157 @@ void benchmark_boost_datatype_mpi_simple(int num_iterations) {
 
 
 
+// Benchmark avec RDMA (MPI RMA)
+void benchmark_rdma_mpi_vector(int rank, int size, int num_iterations) {
+    VectorOfVectors vec; // Émetteur initialise avec tailles variables
+    MPI_Win win;
 
-int main(int argc, char** argv)
-{
+    if (rank == 0) {
+        int outer_size = vec.data.size();
+        std::vector<int> inner_sizes(outer_size);
+        int total_elements = 0;
+        for (int j = 0; j < outer_size; j++) {
+            inner_sizes[j] = vec.data[j].size();
+            total_elements += inner_sizes[j];
+        }
 
-	MPI_Init(&argc, &argv) ; 
-	int rank = -1 ; 
-	int size = 0 ; 
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	MPI_Comm_size(MPI_COMM_WORLD, &size);
-	int num_iterations = 1000 ; 
+        // Allocation d'un buffer contigu pour RDMA
+        std::vector<int> send_buffer(total_elements);
+        int offset = 0;
+        for (int j = 0; j < outer_size; j++) {
+            std::copy(vec.data[j].begin(), vec.data[j].end(), send_buffer.begin() + offset);
+            offset += inner_sizes[j];
+        }
 
-	double start, end ; 
+        // Création de la fenêtre RMA pour exposer send_buffer
+        MPI_Win_create(send_buffer.data(), total_elements * sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
 
-	MPI_Barrier(MPI_COMM_WORLD) ; 
-	start = MPI_Wtime() ; 
-	benchmark_raw_mpi_simple(rank, size, num_iterations);
-	end = MPI_Wtime() ; 
-        std::cout << "Raw MPI SimpleData: " << (end - start) / num_iterations << " s/op\n";
+        for (int i = 0; i < num_iterations; i++) {
+            // Envoi des métadonnées (outer_size et inner_sizes) via communication classique
+	    for (int dest = 1 ; dest < size ; dest++){
+	            MPI_Send(&outer_size, 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
+	            MPI_Send(inner_sizes.data(), outer_size, MPI_INT, dest, 1, MPI_COMM_WORLD);
+	    }
 
+            // Début de la période d'accès RMA
+            MPI_Win_fence(0, win);
 
-        MPI_Barrier(MPI_COMM_WORLD) ;
-        start = MPI_Wtime() ;
-        benchmark_pack_mpi_simple(rank, size, num_iterations);
-        end = MPI_Wtime() ;
-        std::cout << "Pack MPI SimpleData: " << (end - start) / num_iterations << " s/op\n";
+            // Le récepteur ira chercher les données via RDMA (MPI_Get), donc ici on attend juste
+            MPI_Win_fence(0, win);
+        }
 
+        int ack;
+	for (int dest = 1 ; dest < size; dest++){
+	        MPI_Recv(&ack, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
+        MPI_Win_free(&win);
+    }
+    else  {
+        VectorOfVectors vec(0); // Récepteur n'initialise pas à l'avance
 
-        MPI_Barrier(MPI_COMM_WORLD) ;
-        start = MPI_Wtime() ;
-        benchmark_datatype_mpi_simple(rank, size, num_iterations);
-        end = MPI_Wtime() ;
-        std::cout << "Datatype MPI SimpleData: " << (end - start) / num_iterations << " s/op\n";
+        // Allocation d'un buffer pour recevoir les données via RDMA
+        std::vector<int> recv_buffer; // Taille déterminée dynamiquement après réception des métadonnées
 
+        // Création de la fenêtre RMA (vide côté récepteur pour cet exemple, mais nécessaire pour MPI_Win_fence)
+        MPI_Win_create(nullptr, 0, sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
 
+        for (int i = 0; i < num_iterations; i++) {
+            int outer_size;
+            MPI_Recv(&outer_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        MPI_Barrier(MPI_COMM_WORLD) ;
-        start = MPI_Wtime() ;
-        benchmark_boost_mpi_simple(num_iterations);
-        end = MPI_Wtime() ;
-        std::cout << "Boost MPI SimpleData: " << (end - start) / num_iterations << " s/op\n";
+            std::vector<int> inner_sizes(outer_size);
+            MPI_Recv(inner_sizes.data(), outer_size, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        MPI_Barrier(MPI_COMM_WORLD) ;
-        start = MPI_Wtime() ;
-        benchmark_boost_datatype_mpi_simple(num_iterations);
-        end = MPI_Wtime() ;
-        std::cout << "Boost Datatype MPI SimpleData: " << (end - start) / num_iterations << " s/op\n";
+            int total_elements = 0;
+            for (int j = 0; j < outer_size; j++) {
+                total_elements += inner_sizes[j];
+            }
 
+            recv_buffer.resize(total_elements);
+            vec.data.resize(outer_size);
 
+            // Début de la période d'accès RMA
+            MPI_Win_fence(0, win);
 
-	MPI_Finalize() ; 
+            // Utilisation de MPI_Get pour récupérer les données directement depuis la mémoire de rank 0
+            MPI_Get(recv_buffer.data(), total_elements, MPI_INT, 0, 0, total_elements, MPI_INT, win);
 
-	return 0 ; 
+            // Fin de la période d'accès RMA
+            MPI_Win_fence(0, win);
+
+            // Reconstruction de vec.data à partir du buffer reçu
+            int offset = 0;
+            for (int j = 0; j < outer_size; j++) {
+                vec.data[j].resize(inner_sizes[j]);
+                std::copy(recv_buffer.begin() + offset, recv_buffer.begin() + offset + inner_sizes[j], vec.data[j].begin());
+                offset += inner_sizes[j];
+            }
+        }
+
+        int ack = 1;
+        MPI_Send(&ack, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        MPI_Win_free(&win);
+    }
 }
 
 
+int main(int argc, char** argv) {
+    int provided ; 
+    MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
+    int rank = -1;
+    int size = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+    double start, end;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_raw_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Raw MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_bcast_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Bcast MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_pack_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Pack MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_datatype_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Datatype MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_rdma_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "RDMA MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();    
+    benchmark_boost_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Boost MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+    benchmark_boost_packed_mpi_vector(rank, size, NUM_ITERATIONS);
+    end = MPI_Wtime();
+    if (rank == 0) std::cout << "Boost Packed MPI VectorOfVectors: " << (end - start) / NUM_ITERATIONS << " s/op\n";
+
+
+
+    MPI_Finalize();
+    return 0;
+}
