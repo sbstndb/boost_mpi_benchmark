@@ -93,46 +93,48 @@ Results below were obtained using [Google Benchmark](https://github.com/google/b
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
 | **Pack MPI**        | 1.90      | 1    |
-| **Raw MPI**         | 2.12      | 2    |
-| **RDMA MPI**        | 2.73      | 3    |
-| **Bcast MPI**       | 3.04      | 4    |
-| **Datatype MPI**    | 3.18      | 5    |
-| **Boost MPI**       | 5.25      | 6    |
+| **Raw MPI**         | 2.09      | 2    |
+| **RDMA MPI**        | 2.79      | 3    |
+| **Bcast MPI**       | 3.00      | 4    |
+| **Boost Packed MPI**| 3.15      | 5    |
+| **Datatype MPI**    | 3.17      | 6    |
+| **Boost MPI**       | 5.37      | 7    |
 
 ### Medium Data (~21 KB)
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
-| **Raw MPI**         | 6.63      | 1    |
-| **Pack MPI**        | 7.74      | 2    |
-| **RDMA MPI**        | 8.20      | 3    |
-| **Bcast MPI**       | 8.71      | 4    |
-| **Datatype MPI**    | 9.99      | 5    |
-| **Boost MPI**       | 21.3      | 6    |
+| **Raw MPI**         | 6.74      | 1    |
+| **Pack MPI**        | 7.62      | 2    |
+| **RDMA MPI**        | 8.34      | 3    |
+| **Bcast MPI**       | 8.64      | 4    |
+| **Datatype MPI**    | 10.2      | 5    |
+| **Boost Packed MPI**| 12.8      | 6    |
+| **Boost MPI**       | 21.3      | 7    |
 
 ### Large Data (~197 KB)
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
-| **Raw MPI**         | 22.5      | 1    |
-| **Bcast MPI**       | 28.3      | 2    |
-| **Datatype MPI**    | 30.5      | 3    |
-| **Pack MPI**        | 40.5      | 4    |
+| **Raw MPI**         | 22.2      | 1    |
+| **Bcast MPI**       | 28.5      | 2    |
+| **Datatype MPI**    | 31.2      | 3    |
+| **Pack MPI**        | 42.0      | 4    |
 | **RDMA MPI**        | 44.8      | 5    |
-| **Boost MPI**       | 106       | 6    |
+| **Boost Packed MPI**| 67.1      | 6    |
+| **Boost MPI**       | 106       | 7    |
 
 ### XLarge Data (~1.9 MB)
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
 | **Datatype MPI**    | 278       | 1    |
-| **RDMA MPI**        | 459       | 2    |
-| **Raw MPI**         | 692       | 3    |
-| **Bcast MPI**       | 772       | 4    |
-| **Pack MPI**        | 1655      | 5    |
-| **Boost MPI**       | N/A*      | -    |
-
-*Boost MPI was too slow for XLarge data (serialization overhead).
+| **RDMA MPI**        | 472       | 2    |
+| **Raw MPI**         | 672       | 3    |
+| **Bcast MPI**       | 759       | 4    |
+| **Pack MPI**        | 1635      | 5    |
+| **Boost Packed MPI**| 1905      | 6    |
+| **Boost MPI**       | 4175      | 7    |
 
 ## Conclusion
 
@@ -140,11 +142,12 @@ The optimal communication method **depends on data size**:
 
 - **Small/Medium data (< 200 KB)**: **Raw MPI** and **Pack MPI** deliver the best performance. The overhead of MPI derived datatypes is not worth it for small transfers.
 
-- **Large data (> 1 MB)**: **Datatype MPI** becomes the clear winner, outperforming Raw MPI by ~2.5x. The upfront cost of creating derived datatypes is amortized over the larger transfer.
+- **Large data (> 1 MB)**: **Datatype MPI** becomes the clear winner, outperforming Raw MPI by ~2.4x. The upfront cost of creating derived datatypes is amortized over the larger transfer.
 
 **Key findings:**
-- Native MPI methods (Raw, Bcast, Pack, Datatype, RDMA) consistently outperform Boost.MPI by 2-5x.
-- **Boost.MPI** introduces significant serialization overhead that grows with data size, making it unsuitable for large transfers.
+- Native MPI methods (Raw, Bcast, Pack, Datatype, RDMA) consistently outperform Boost.MPI by 2-15x depending on data size.
+- **Boost.MPI** introduces significant serialization overhead that grows dramatically with data size (5.37 μs for 1.4 KB vs 4175 μs for 1.9 MB).
+- **Boost Packed MPI** offers a middle ground, being ~2x faster than Boost.MPI for large data by serializing once and reusing the buffer.
 - For **performance-critical applications** with large data structures, prefer **Datatype MPI** or **RDMA**.
 - For **small, frequent transfers**, **Raw MPI** or **Pack MPI** are recommended.
 

@@ -575,13 +575,20 @@ static void BM_BoostPackedMPI(benchmark::State& state) {
     BENCHMARK(name)->Args({5, 10000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
     BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10);
 
+// Boost benchmarks need fewer iterations for XLarge due to serialization overhead
+#define BENCHMARK_BOOST_CONFIGS(name) \
+    BENCHMARK(name)->Args({5, 1})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 1000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 10000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3);
+
 BENCHMARK_WITH_CONFIGS(BM_RawMPI)
 BENCHMARK_WITH_CONFIGS(BM_BcastMPI)
 BENCHMARK_WITH_CONFIGS(BM_PackMPI)
 BENCHMARK_WITH_CONFIGS(BM_DatatypeMPI)
 BENCHMARK_WITH_CONFIGS(BM_RDMAMPI)
-BENCHMARK_WITH_CONFIGS(BM_BoostMPI)
-BENCHMARK_WITH_CONFIGS(BM_BoostPackedMPI)
+BENCHMARK_BOOST_CONFIGS(BM_BoostMPI)
+BENCHMARK_BOOST_CONFIGS(BM_BoostPackedMPI)
 
 // ============================================================================
 // Main
