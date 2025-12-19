@@ -68,18 +68,20 @@ VectorOfVectors (std::vector<std::vector<int>>)
 
 ### Benchmark Configurations
 
-| Config | outer_size | base_size | Total ints | Data Size |
-|--------|------------|-----------|------------|-----------|
-| Small  | 5          | 1         | 359        | ~1.4 KB   |
-| Medium | 5          | 1,000     | 5,354      | ~21 KB    |
-| Large  | 5          | 10,000    | 50,354     | ~197 KB   |
-| XLarge | 5          | 100,000   | 500,354    | ~1.9 MB   |
+| Config   | outer_size | base_size  | Total ints  | Data Size |
+|----------|------------|------------|-------------|-----------|
+| Small    | 5          | 1          | 359         | ~1.4 KB   |
+| Medium   | 5          | 1,000      | 5,354       | ~21 KB    |
+| Large    | 5          | 10,000     | 50,354      | ~197 KB   |
+| XLarge   | 5          | 100,000    | 500,354     | ~1.9 MB   |
+| XXLarge  | 5          | 1,000,000  | 5,000,354   | ~19.1 MB  |
+| XXXLarge | 5          | 10,000,000 | 50,000,354  | ~191 MB   |
 
 ## Benchmarking Methodology
 
 The benchmark uses [Google Benchmark](https://github.com/google/benchmark) integrated with MPI:
 
-- **Inner loop pattern**: Each Google Benchmark iteration runs 10,000 inner iterations of the MPI communication pattern to amortize synchronization overhead.
+- **Inner loop pattern**: Each Google Benchmark iteration runs multiple inner iterations (scaled by data size: 10,000 for small, down to 10 for XXLarge) to amortize synchronization overhead.
 - **Manual timing**: Uses `MPI_Wtime()` for precise timing with `UseManualTime()` to report per-operation time.
 - **Multi-process synchronization**: A `NullReporter` suppresses output on non-root MPI processes while ensuring all processes execute the same number of iterations.
 - **Timing accuracy**: The maximum time across all processes is reported via `MPI_Allreduce` to capture the true communication cost.
@@ -128,27 +130,55 @@ Results below were obtained using [Google Benchmark](https://github.com/google/b
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
-| **Datatype MPI**    | 278       | 1    |
-| **RDMA MPI**        | 472       | 2    |
-| **Raw MPI**         | 672       | 3    |
-| **Bcast MPI**       | 759       | 4    |
-| **Pack MPI**        | 1635      | 5    |
-| **Boost Packed MPI**| 1905      | 6    |
-| **Boost MPI**       | 4175      | 7    |
+| **Bcast MPI**       | 379       | 1    |
+| **Datatype MPI**    | 413       | 2    |
+| **Pack MPI**        | 593       | 3    |
+| **RDMA MPI**        | 615       | 4    |
+| **Raw MPI**         | 979       | 5    |
+| **Boost Packed MPI**| 1121      | 6    |
+| **Boost MPI**       | 1643      | 7    |
+
+### XXLarge Data (~19.1 MB)
+
+| Communication Method | Time (ms) | Rank |
+|---------------------|----------:|:----:|
+| **Datatype MPI**    | 11.5      | 1    |
+| **RDMA MPI**        | 16.7      | 2    |
+| **Bcast MPI**       | 19.0      | 3    |
+| **Raw MPI**         | 19.4      | 4    |
+| **Pack MPI**        | 38.6      | 5    |
+| **Boost Packed MPI**| 64.1      | 6    |
+| **Boost MPI**       | 79.6      | 7    |
+
+### XXXLarge Data (~191 MB)
+
+| Communication Method | Time (ms) | Rank |
+|---------------------|----------:|:----:|
+| **Raw MPI**         | 216       | 1    |
+| **Bcast MPI**       | 231       | 2    |
+| **Datatype MPI**    | 243       | 3    |
+| **Pack MPI**        | 412       | 4    |
+| **RDMA MPI**        | 860       | 5    |
+| **Boost Packed MPI**| 1006      | 6    |
+| **Boost MPI**       | 1547      | 7    |
 
 ## Conclusion
 
 The optimal communication method **depends on data size**:
 
-- **Small/Medium data (< 200 KB)**: **Raw MPI** and **Pack MPI** deliver the best performance. The overhead of MPI derived datatypes is not worth it for small transfers.
+- **Small/Medium data (< 200 KB)**: **Raw MPI** and **Pack MPI** deliver the best performance.
 
-- **Large data (> 1 MB)**: **Datatype MPI** becomes the clear winner, outperforming Raw MPI by ~2.4x. The upfront cost of creating derived datatypes is amortized over the larger transfer.
+- **Large data (1-20 MB)**: **Datatype MPI** becomes the winner, outperforming Raw MPI by ~1.7x. The upfront cost of creating derived datatypes is amortized over the larger transfer.
+
+- **Very large data (> 100 MB)**: **Raw MPI** returns as the fastest method, as the overhead of datatype creation becomes significant.
 
 **Key findings:**
-- Native MPI methods (Raw, Bcast, Pack, Datatype, RDMA) consistently outperform Boost.MPI by 2-15x depending on data size.
-- **Boost.MPI** introduces significant serialization overhead that grows dramatically with data size (5.37 μs for 1.4 KB vs 4175 μs for 1.9 MB).
-- **Boost Packed MPI** offers a middle ground, being ~2x faster than Boost.MPI for large data by serializing once and reusing the buffer.
-- For **performance-critical applications** with large data structures, prefer **Datatype MPI** or **RDMA**.
+- Native MPI methods consistently outperform Boost.MPI by 2-7x depending on data size.
+- **Boost.MPI** introduces significant serialization overhead that grows dramatically with data size (7 μs for 1.4 KB → 1.5 sec for 191 MB).
+- **Boost Packed MPI** offers a middle ground, being ~1.5x faster than Boost.MPI for large data.
+- **RDMA** becomes the slowest native MPI method for very large data (860 ms for 191 MB).
+- For **medium-to-large data (1-20 MB)**, prefer **Datatype MPI**.
+- For **very large data (> 100 MB)**, prefer **Raw MPI** or **Bcast MPI**.
 - For **small, frequent transfers**, **Raw MPI** or **Pack MPI** are recommended.
 
 **Note:** These results may vary significantly depending on the MPI implementation (Open MPI, MPICH, Intel MPI, etc.) and the hardware configuration used.

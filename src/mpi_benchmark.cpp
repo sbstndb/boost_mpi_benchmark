@@ -7,7 +7,23 @@
 #include <boost/mpi/packed_iarchive.hpp>
 #include <benchmark/benchmark.h>
 
-#define INNER_ITERATIONS 10000
+// Inner iterations scaled by data size to keep benchmark time reasonable
+#define INNER_ITERATIONS_SMALL   10000
+#define INNER_ITERATIONS_MEDIUM  10000
+#define INNER_ITERATIONS_LARGE   1000
+#define INNER_ITERATIONS_XLARGE  100
+#define INNER_ITERATIONS_XXLARGE 10
+#define INNER_ITERATIONS_XXXLARGE 1
+
+// Helper to get inner iterations based on base_size
+inline int get_inner_iterations(int base_size) {
+    if (base_size <= 1) return INNER_ITERATIONS_SMALL;
+    if (base_size <= 1000) return INNER_ITERATIONS_MEDIUM;
+    if (base_size <= 10000) return INNER_ITERATIONS_LARGE;
+    if (base_size <= 100000) return INNER_ITERATIONS_XLARGE;
+    if (base_size <= 1000000) return INNER_ITERATIONS_XXLARGE;
+    return INNER_ITERATIONS_XXXLARGE;
+}
 
 // Variables globales MPI
 static int g_rank = -1;
@@ -51,8 +67,8 @@ public:
 };
 
 // Helper pour créer un nom de benchmark avec la taille
-static void SetBytesProcessed(benchmark::State& state, const VectorOfVectors& vec) {
-    state.SetBytesProcessed(state.iterations() * INNER_ITERATIONS * vec.total_elements() * sizeof(int));
+static void SetBytesProcessed(benchmark::State& state, const VectorOfVectors& vec, int inner_iters) {
+    state.SetBytesProcessed(state.iterations() * inner_iters * vec.total_elements() * sizeof(int));
 }
 
 // ============================================================================
@@ -61,6 +77,7 @@ static void SetBytesProcessed(benchmark::State& state, const VectorOfVectors& ve
 static void BM_RawMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     VectorOfVectors vec(outer_size_param, base_size_param);
     int outer_size = vec.data.size();
@@ -73,7 +90,7 @@ static void BM_RawMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 std::vector<MPI_Request> requests;
                 for (int dest = 1; dest < g_size; dest++) {
@@ -125,12 +142,12 @@ static void BM_RawMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -139,6 +156,7 @@ static void BM_RawMPI(benchmark::State& state) {
 static void BM_BcastMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     VectorOfVectors vec(outer_size_param, base_size_param);
     int outer_size = vec.data.size();
@@ -151,7 +169,7 @@ static void BM_BcastMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 MPI_Bcast(&outer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
                 MPI_Bcast(inner_sizes.data(), outer_size, MPI_INT, 0, MPI_COMM_WORLD);
@@ -194,12 +212,12 @@ static void BM_BcastMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -208,6 +226,7 @@ static void BM_BcastMPI(benchmark::State& state) {
 static void BM_PackMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     VectorOfVectors vec(outer_size_param, base_size_param);
     int outer_size = vec.data.size();
@@ -229,7 +248,7 @@ static void BM_PackMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 std::vector<MPI_Request> requests;
                 int position = 0;
@@ -280,12 +299,12 @@ static void BM_PackMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -294,6 +313,7 @@ static void BM_PackMPI(benchmark::State& state) {
 static void BM_DatatypeMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     VectorOfVectors vec(outer_size_param, base_size_param);
     int outer_size = vec.data.size();
@@ -306,7 +326,7 @@ static void BM_DatatypeMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 std::vector<MPI_Request> requests;
                 for (int dest = 1; dest < g_size; dest++) {
@@ -360,12 +380,12 @@ static void BM_DatatypeMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -374,6 +394,7 @@ static void BM_DatatypeMPI(benchmark::State& state) {
 static void BM_RDMAMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     VectorOfVectors vec(outer_size_param, base_size_param);
     MPI_Win win;
@@ -405,7 +426,7 @@ static void BM_RDMAMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 for (int dest = 1; dest < g_size; dest++) {
                     MPI_Send(&outer_size, 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
@@ -453,14 +474,14 @@ static void BM_RDMAMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
 
     MPI_Win_free(&win);
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -469,6 +490,7 @@ static void BM_RDMAMPI(benchmark::State& state) {
 static void BM_BoostMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     boost::mpi::communicator world;
     VectorOfVectors vec(outer_size_param, base_size_param);
@@ -477,7 +499,7 @@ static void BM_BoostMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 for (int dest = 1; dest < g_size; dest++) {
                     world.send(dest, 0, vec);
@@ -500,12 +522,12 @@ static void BM_BoostMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -514,6 +536,7 @@ static void BM_BoostMPI(benchmark::State& state) {
 static void BM_BoostPackedMPI(benchmark::State& state) {
     int outer_size_param = state.range(0);
     int base_size_param = state.range(1);
+    int inner_iters = get_inner_iterations(base_size_param);
 
     boost::mpi::communicator world;
     VectorOfVectors vec(outer_size_param, base_size_param);
@@ -522,7 +545,7 @@ static void BM_BoostPackedMPI(benchmark::State& state) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
 
-        for (int iter = 0; iter < INNER_ITERATIONS; iter++) {
+        for (int iter = 0; iter < inner_iters; iter++) {
             if (g_rank == 0) {
                 boost::mpi::packed_oarchive::buffer_type buffer;
                 boost::mpi::packed_oarchive oa(world, buffer);
@@ -548,12 +571,12 @@ static void BM_BoostPackedMPI(benchmark::State& state) {
         }
 
         double elapsed = MPI_Wtime() - start;
-        double per_op = elapsed / INNER_ITERATIONS;
+        double per_op = elapsed / inner_iters;
         double max_per_op;
         MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         state.SetIterationTime(max_per_op);
     }
-    SetBytesProcessed(state, vec);
+    SetBytesProcessed(state, vec, inner_iters);
 }
 
 // ============================================================================
@@ -568,19 +591,25 @@ static void BM_BoostPackedMPI(benchmark::State& state) {
 // Total pour base=1000: 5354 ints = 21 KB
 // Total pour base=10000: 50354 ints = 197 KB
 // Total pour base=100000: 500354 ints = 1.9 MB
+// Total pour base=1000000: 5000354 ints = 19.1 MB
+// Total pour base=10000000: 50000354 ints = 191 MB
 
 #define BENCHMARK_WITH_CONFIGS(name) \
     BENCHMARK(name)->Args({5, 1})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
     BENCHMARK(name)->Args({5, 1000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
     BENCHMARK(name)->Args({5, 10000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10);
+    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 1000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(5); \
+    BENCHMARK(name)->Args({5, 10000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3);
 
-// Boost benchmarks need fewer iterations for XLarge due to serialization overhead
+// Boost benchmarks need fewer iterations for large sizes due to serialization overhead
 #define BENCHMARK_BOOST_CONFIGS(name) \
     BENCHMARK(name)->Args({5, 1})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
     BENCHMARK(name)->Args({5, 1000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
     BENCHMARK(name)->Args({5, 10000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3);
+    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3); \
+    BENCHMARK(name)->Args({5, 1000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(2); \
+    BENCHMARK(name)->Args({5, 10000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(1);
 
 BENCHMARK_WITH_CONFIGS(BM_RawMPI)
 BENCHMARK_WITH_CONFIGS(BM_BcastMPI)
