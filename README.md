@@ -90,4 +90,10 @@ Results below were obtained on a 4-process run, compiled with GCC and **-O3** op
 
 For transferring complex, non-contiguous data structures, creating and committing derived **MPI Datatypes** consistently delivers the best performance. **RDMA (one-sided communication)** is also a highly competitive alternative.
 
-While convenient, standard **Boost.MPI serialization** introduces significant overhead, making it the slowest method in this benchmark. For performance-critical applications, manual memory layout management via MPI Datatypes or RDMA is highly recommended over automated serialization libraries. 
+While convenient, standard **Boost.MPI serialization** introduces significant overhead, making it the slowest method in this benchmark. For performance-critical applications, manual memory layout management via MPI Datatypes or RDMA is highly recommended over automated serialization libraries.
+
+**Note:** These results may vary significantly depending on the MPI implementation (Open MPI, MPICH, Intel MPI, etc.) and the hardware configuration used.
+
+## Context
+
+This benchmark was developed to support decision-making within the [Samurai](https://github.com/hpc-maths/samurai) project, in order to understand the current state of MPI communication performance. 

@@ -6,7 +6,7 @@ find_package(MPI REQUIRED)
 find_package(Boost REQUIRED COMPONENTS mpi serialization)
 
 # Créer un seul exécutable
-add_executable(mpi_benchmark mpi_benchmark.cpp)
+add_executable(mpi_benchmark src/mpi_benchmark.cpp)
 target_include_directories(mpi_benchmark PUBLIC ${MPI_CXX_INCLUDE_DIRS})
 target_link_libraries(mpi_benchmark PUBLIC ${MPI_CXX_LIBRARIES} Boost::mpi Boost::serialization)
 
