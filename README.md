@@ -6,10 +6,12 @@ This repository provides an experimental C++ benchmark to measure and compare th
 
 ## Prerequisites
 
-- A C++11 compliant compiler (e.g., GCC, Clang)
-- CMake (>= 3.10)
+- A C++17 compliant compiler (e.g., GCC, Clang)
+- CMake (>= 3.14)
 - An MPI implementation (e.g., Open MPI, MPICH)
-- Boost libraries (>= 1.83) with `mpi` and `serialization` components.
+- Boost libraries (>= 1.83) with `mpi` and `serialization` components
+
+**Note:** [Google Benchmark](https://github.com/google/benchmark) is automatically fetched and built via CMake's FetchContent.
 
 ## Build & Run
 
@@ -72,25 +74,34 @@ VectorOfVectors (std::vector<std::vector<int>>)
 Where: N0, N1, N2... are variable sizes (N_i = 1 + i^4)
 ```
 
+## Benchmarking Methodology
+
+The benchmark uses [Google Benchmark](https://github.com/google/benchmark) integrated with MPI:
+
+- **Inner loop pattern**: Each Google Benchmark iteration runs 10,000 inner iterations of the MPI communication pattern to amortize synchronization overhead.
+- **Manual timing**: Uses `MPI_Wtime()` for precise timing with `UseManualTime()` to report per-operation time.
+- **Multi-process synchronization**: A `NullReporter` suppresses output on non-root MPI processes while ensuring all processes execute the same number of iterations.
+- **Timing accuracy**: The maximum time across all processes is reported via `MPI_Allreduce` to capture the true communication cost.
+
 ## Performance Results
 
-Results below were obtained on a 4-process run, compiled with GCC and **-O3** optimization. The metric is the average time per operation.
+Results below were obtained using [Google Benchmark](https://github.com/google/benchmark) on a 4-process run, compiled with GCC and **-O3** optimization. The metric is the average time per operation in microseconds (μs).
 
-| Communication Method          | Performance (s/op) | Rank |
-|-------------------------------|--------------------|:----:|
-| **Datatype MPI**              | **1.20e-05**       | 1    |
-| **RDMA MPI**                  | **1.44e-05**       | 2    |
-| **Raw MPI**                   | **1.70e-05**       | 3    |
-| **Bcast MPI**                 | **1.90e-05**       | 4    |
-| **Pack MPI**                  | **2.14e-05**       | 5    |
-| **Boost Packed MPI**          | **2.38e-05**       | 6    |
-| **Boost MPI**                 | **4.09e-05**       | 7    |
+| Communication Method          | Performance (μs/op) | Rank |
+|-------------------------------|--------------------:|:----:|
+| **Raw MPI**                   | 12.7                | 1    |
+| **Bcast MPI**                 | 12.8                | 2    |
+| **Datatype MPI**              | 13.4                | 3    |
+| **RDMA MPI**                  | 15.5                | 4    |
+| **Pack MPI**                  | 16.8                | 5    |
+| **Boost Packed MPI**          | 26.5                | 6    |
+| **Boost MPI**                 | 43.4                | 7    |
 
 ## Conclusion
 
-For transferring complex, non-contiguous data structures, creating and committing derived **MPI Datatypes** consistently delivers the best performance. **RDMA (one-sided communication)** is also a highly competitive alternative.
+For transferring complex, non-contiguous data structures, **Raw MPI** (point-to-point with `MPI_Isend`/`MPI_Irecv`) and **Bcast MPI** (collective with `MPI_Ibcast`) deliver the best performance, closely followed by **Datatype MPI** and **RDMA**. All native MPI approaches show comparable performance in the 12-17 μs range.
 
-While convenient, standard **Boost.MPI serialization** introduces significant overhead, making it the slowest method in this benchmark. For performance-critical applications, manual memory layout management via MPI Datatypes or RDMA is highly recommended over automated serialization libraries.
+While convenient, standard **Boost.MPI serialization** introduces significant overhead (~3.4x slower than Raw MPI), making it the slowest method in this benchmark. **Boost Packed MPI** offers a middle ground by serializing once and reusing the buffer. For performance-critical applications, native MPI approaches are recommended over automated serialization libraries.
 
 **Note:** These results may vary significantly depending on the MPI implementation (Open MPI, MPICH, Intel MPI, etc.) and the hardware configuration used.
 
