@@ -16,13 +16,14 @@
 #define INNER_ITERATIONS_XXXLARGE 1
 
 // Helper to get inner iterations based on base_size
+// Adapted for new formula: total = base_size * 55
 inline int get_inner_iterations(int base_size) {
-    if (base_size <= 1) return INNER_ITERATIONS_SMALL;
-    if (base_size <= 1000) return INNER_ITERATIONS_MEDIUM;
-    if (base_size <= 10000) return INNER_ITERATIONS_LARGE;
-    if (base_size <= 100000) return INNER_ITERATIONS_XLARGE;
-    if (base_size <= 1000000) return INNER_ITERATIONS_XXLARGE;
-    return INNER_ITERATIONS_XXXLARGE;
+    if (base_size <= 50) return INNER_ITERATIONS_SMALL;      // ~11 KB
+    if (base_size <= 500) return INNER_ITERATIONS_MEDIUM;    // ~107 KB
+    if (base_size <= 5000) return INNER_ITERATIONS_LARGE;    // ~1 MB
+    if (base_size <= 50000) return INNER_ITERATIONS_XLARGE;  // ~10 MB
+    if (base_size <= 500000) return INNER_ITERATIONS_XXLARGE; // ~105 MB
+    return INNER_ITERATIONS_XXXLARGE;                         // ~420 MB
 }
 
 // Variables globales MPI
@@ -32,11 +33,13 @@ static int g_size = 0;
 struct VectorOfVectors {
     std::vector<std::vector<int>> data;
 
-    // Constructeur paramétré : outer_size vecteurs, taille = base_size + i^4
+    // Constructeur paramétré : outer_size vecteurs, taille = base_size * (i+1)²
+    // Ratio 25:1 entre le plus grand et le plus petit vecteur
     VectorOfVectors(int outer_size, int base_size) {
         data.resize(outer_size);
         for (int i = 0; i < outer_size; i++) {
-            data[i].resize(base_size + i * i * i * i, 0);
+            int factor = (i + 1) * (i + 1);  // 1, 4, 9, 16, 25
+            data[i].resize(base_size * factor, 0);
         }
     }
 
@@ -582,34 +585,35 @@ static void BM_BoostPackedMPI(benchmark::State& state) {
 // ============================================================================
 // Configurations de benchmark
 // Args: {outer_size, base_size}
-// Taille totale = sum(base_size + i^4) pour i de 0 à outer_size-1
+// Formule: size[i] = base_size * (i+1)² avec ratio 25:1 entre max et min
+// Taille totale = base_size * (1 + 4 + 9 + 16 + 25) = base_size * 55
 // ============================================================================
 
-// Configuration: 5 vecteurs, petite taille de base
-// Tailles: base+0, base+1, base+16, base+81, base+256
-// Total pour base=1: 359 ints = 1.4 KB
-// Total pour base=1000: 5354 ints = 21 KB
-// Total pour base=10000: 50354 ints = 197 KB
-// Total pour base=100000: 500354 ints = 1.9 MB
-// Total pour base=1000000: 5000354 ints = 19.1 MB
-// Total pour base=10000000: 50000354 ints = 191 MB
+// Configuration: 5 vecteurs avec ratio 25:1
+// Tailles relatives: 1x, 4x, 9x, 16x, 25x (total = 55x base_size)
+// base=50:      2,750 ints = 11 KB      (Small)
+// base=500:     27,500 ints = 107 KB    (Medium)
+// base=5000:    275,000 ints = 1.05 MB  (Large)
+// base=50000:   2,750,000 ints = 10.5 MB (XLarge)
+// base=500000:  27,500,000 ints = 105 MB (XXLarge)
+// base=2000000: 110,000,000 ints = 420 MB (XXXLarge)
 
 #define BENCHMARK_WITH_CONFIGS(name) \
-    BENCHMARK(name)->Args({5, 1})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 1000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 10000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 1000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(5); \
-    BENCHMARK(name)->Args({5, 10000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3);
+    BENCHMARK(name)->Args({5, 50})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 500})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 5000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 50000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 500000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(5); \
+    BENCHMARK(name)->Args({5, 2000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3);
 
 // Boost benchmarks need fewer iterations for large sizes due to serialization overhead
 #define BENCHMARK_BOOST_CONFIGS(name) \
-    BENCHMARK(name)->Args({5, 1})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 1000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 10000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
-    BENCHMARK(name)->Args({5, 100000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3); \
-    BENCHMARK(name)->Args({5, 1000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(2); \
-    BENCHMARK(name)->Args({5, 10000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(1);
+    BENCHMARK(name)->Args({5, 50})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 500})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 5000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({5, 50000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3); \
+    BENCHMARK(name)->Args({5, 500000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(2); \
+    BENCHMARK(name)->Args({5, 2000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(1);
 
 BENCHMARK_WITH_CONFIGS(BM_RawMPI)
 BENCHMARK_WITH_CONFIGS(BM_BcastMPI)
