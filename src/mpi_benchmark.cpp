@@ -583,6 +583,199 @@ static void BM_BoostPackedMPI(benchmark::State& state) {
 }
 
 // ============================================================================
+// Benchmarks 1D - Mesure du coût de communication pur (buffer contigu)
+// ============================================================================
+
+// Helper pour obtenir les inner iterations pour 1D basé sur la taille du tableau
+// Tailles équivalentes aux benchmarks 2D (base_size * 55)
+inline int get_inner_iterations_1d(int array_size) {
+    if (array_size <= 2750) return INNER_ITERATIONS_SMALL;        // ~11 KB
+    if (array_size <= 27500) return INNER_ITERATIONS_MEDIUM;      // ~107 KB
+    if (array_size <= 275000) return INNER_ITERATIONS_LARGE;      // ~1 MB
+    if (array_size <= 2750000) return INNER_ITERATIONS_XLARGE;    // ~10 MB
+    if (array_size <= 27500000) return INNER_ITERATIONS_XXLARGE;  // ~105 MB
+    return INNER_ITERATIONS_XXXLARGE;                              // ~420 MB
+}
+
+// Helper pour SetBytesProcessed pour 1D
+static void SetBytesProcessed1D(benchmark::State& state, int array_size, int inner_iters) {
+    state.SetBytesProcessed(state.iterations() * inner_iters * array_size * sizeof(int));
+}
+
+// ============================================================================
+// Benchmark Raw MPI 1D - Point-to-point avec buffer contigu
+// ============================================================================
+static void BM_RawMPI_1D(benchmark::State& state) {
+    int array_size = state.range(0);
+    int inner_iters = get_inner_iterations_1d(array_size);
+
+    std::vector<int> send_buffer(array_size, 42);
+    std::vector<int> recv_buffer(array_size);
+
+    for (auto _ : state) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        double start = MPI_Wtime();
+
+        for (int iter = 0; iter < inner_iters; iter++) {
+            if (g_rank == 0) {
+                std::vector<MPI_Request> requests(g_size - 1);
+                for (int dest = 1; dest < g_size; dest++) {
+                    MPI_Isend(send_buffer.data(), array_size, MPI_INT, dest, 0, MPI_COMM_WORLD, &requests[dest - 1]);
+                }
+                MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+            } else {
+                MPI_Recv(recv_buffer.data(), array_size, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        }
+
+        // Synchronisation finale
+        if (g_rank == 0) {
+            int ack;
+            for (int dest = 1; dest < g_size; dest++) {
+                MPI_Recv(&ack, 1, MPI_INT, dest, 99, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        } else {
+            int ack = 1;
+            MPI_Send(&ack, 1, MPI_INT, 0, 99, MPI_COMM_WORLD);
+        }
+
+        double elapsed = MPI_Wtime() - start;
+        double per_op = elapsed / inner_iters;
+        double max_per_op;
+        MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        state.SetIterationTime(max_per_op);
+    }
+    SetBytesProcessed1D(state, array_size, inner_iters);
+}
+
+// ============================================================================
+// Benchmark Bcast MPI 1D - Broadcast collectif avec buffer contigu
+// ============================================================================
+static void BM_BcastMPI_1D(benchmark::State& state) {
+    int array_size = state.range(0);
+    int inner_iters = get_inner_iterations_1d(array_size);
+
+    std::vector<int> buffer(array_size, g_rank == 0 ? 42 : 0);
+
+    for (auto _ : state) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        double start = MPI_Wtime();
+
+        for (int iter = 0; iter < inner_iters; iter++) {
+            MPI_Bcast(buffer.data(), array_size, MPI_INT, 0, MPI_COMM_WORLD);
+        }
+
+        // Synchronisation finale
+        if (g_rank == 0) {
+            int ack;
+            for (int dest = 1; dest < g_size; dest++) {
+                MPI_Recv(&ack, 1, MPI_INT, dest, 99, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        } else {
+            int ack = 1;
+            MPI_Send(&ack, 1, MPI_INT, 0, 99, MPI_COMM_WORLD);
+        }
+
+        double elapsed = MPI_Wtime() - start;
+        double per_op = elapsed / inner_iters;
+        double max_per_op;
+        MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        state.SetIterationTime(max_per_op);
+    }
+    SetBytesProcessed1D(state, array_size, inner_iters);
+}
+
+// ============================================================================
+// Benchmark RDMA MPI 1D - One-sided avec buffer contigu
+// ============================================================================
+static void BM_RDMAMPI_1D(benchmark::State& state) {
+    int array_size = state.range(0);
+    int inner_iters = get_inner_iterations_1d(array_size);
+
+    std::vector<int> buffer(array_size, g_rank == 0 ? 42 : 0);
+    MPI_Win win;
+
+    if (g_rank == 0) {
+        MPI_Win_create(buffer.data(), array_size * sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+    } else {
+        MPI_Win_create(nullptr, 0, sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+    }
+
+    std::vector<int> recv_buffer(array_size);
+
+    for (auto _ : state) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        double start = MPI_Wtime();
+
+        for (int iter = 0; iter < inner_iters; iter++) {
+            MPI_Win_fence(0, win);
+            if (g_rank != 0) {
+                MPI_Get(recv_buffer.data(), array_size, MPI_INT, 0, 0, array_size, MPI_INT, win);
+            }
+            MPI_Win_fence(0, win);
+        }
+
+        // Synchronisation finale
+        if (g_rank == 0) {
+            int ack;
+            for (int dest = 1; dest < g_size; dest++) {
+                MPI_Recv(&ack, 1, MPI_INT, dest, 99, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        } else {
+            int ack = 1;
+            MPI_Send(&ack, 1, MPI_INT, 0, 99, MPI_COMM_WORLD);
+        }
+
+        double elapsed = MPI_Wtime() - start;
+        double per_op = elapsed / inner_iters;
+        double max_per_op;
+        MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        state.SetIterationTime(max_per_op);
+    }
+
+    MPI_Win_free(&win);
+    SetBytesProcessed1D(state, array_size, inner_iters);
+}
+
+// ============================================================================
+// Benchmark Boost MPI 1D - Broadcast avec std::vector<int>
+// ============================================================================
+static void BM_BoostMPI_1D(benchmark::State& state) {
+    int array_size = state.range(0);
+    int inner_iters = get_inner_iterations_1d(array_size);
+
+    boost::mpi::communicator world;
+    std::vector<int> buffer(array_size, g_rank == 0 ? 42 : 0);
+
+    for (auto _ : state) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        double start = MPI_Wtime();
+
+        for (int iter = 0; iter < inner_iters; iter++) {
+            boost::mpi::broadcast(world, buffer, 0);
+        }
+
+        // Synchronisation finale
+        if (g_rank == 0) {
+            int ack;
+            for (int dest = 1; dest < g_size; dest++) {
+                world.recv(dest, 1, ack);
+            }
+        } else {
+            int ack = 1;
+            world.send(0, 1, ack);
+        }
+
+        double elapsed = MPI_Wtime() - start;
+        double per_op = elapsed / inner_iters;
+        double max_per_op;
+        MPI_Allreduce(&per_op, &max_per_op, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        state.SetIterationTime(max_per_op);
+    }
+    SetBytesProcessed1D(state, array_size, inner_iters);
+}
+
+// ============================================================================
 // Configurations de benchmark
 // Args: {outer_size, base_size}
 // Formule: size[i] = base_size * (i+1)² avec ratio 25:1 entre max et min
@@ -622,6 +815,26 @@ BENCHMARK_WITH_CONFIGS(BM_DatatypeMPI)
 BENCHMARK_WITH_CONFIGS(BM_RDMAMPI)
 BENCHMARK_BOOST_CONFIGS(BM_BoostMPI)
 BENCHMARK_BOOST_CONFIGS(BM_BoostPackedMPI)
+
+// ============================================================================
+// Configuration 1D - Tailles équivalentes aux benchmarks 2D
+// Args: {array_size}
+// 2750 = 11 KB, 27500 = 107 KB, 275000 = 1 MB, 2750000 = 10 MB,
+// 27500000 = 105 MB, 110000000 = 420 MB
+// ============================================================================
+
+#define BENCHMARK_1D_CONFIGS(name) \
+    BENCHMARK(name)->Args({2750})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({27500})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({275000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({2750000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(10); \
+    BENCHMARK(name)->Args({27500000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(5); \
+    BENCHMARK(name)->Args({110000000})->UseManualTime()->Unit(benchmark::kMicrosecond)->Iterations(3);
+
+BENCHMARK_1D_CONFIGS(BM_RawMPI_1D)
+BENCHMARK_1D_CONFIGS(BM_BcastMPI_1D)
+BENCHMARK_1D_CONFIGS(BM_RDMAMPI_1D)
+BENCHMARK_1D_CONFIGS(BM_BoostMPI_1D)
 
 // ============================================================================
 // Main

@@ -2,7 +2,10 @@
 
 ## Objective
 
-This repository provides an experimental C++ benchmark to measure and compare the performance of various data serialization and communication strategies using MPI and Boost. It specifically focuses on transferring complex, variably-sized data structures (`std::vector<std::vector<int>>`) between MPI processes.
+This repository provides an experimental C++ benchmark to measure and compare the performance of various data serialization and communication strategies using MPI and Boost. It includes two benchmark suites:
+
+1. **2D Benchmarks**: Transfer of complex, variably-sized nested structures (`std::vector<std::vector<int>>`)
+2. **1D Benchmarks**: Transfer of simple contiguous arrays (`std::vector<int>`) to measure pure communication cost
 
 ## Prerequisites
 
@@ -37,7 +40,9 @@ mpirun -np 4 ./mpi_benchmark
 
 ## Technical Overview
 
-The benchmark transfers a `std::vector<std::vector<int>>` where inner vectors have non-uniform sizes. It compares the following communication methods:
+### 2D Benchmarks (Nested Vectors)
+
+The 2D benchmark transfers a `std::vector<std::vector<int>>` where inner vectors have non-uniform sizes. It compares the following communication methods:
 
 - **Raw MPI**: Manual point-to-point transfer using asynchronous `MPI_Isend`/`MPI_Irecv`. Metadata (sizes) are sent first.
 - **Bcast MPI**: Collective communication using `MPI_Bcast` and asynchronous `MPI_Ibcast`.
@@ -46,6 +51,15 @@ The benchmark transfers a `std::vector<std::vector<int>>` where inner vectors ha
 - **RDMA (One-Sided)**: Leverages MPI Remote Memory Access (`MPI_Win_create`, `MPI_Get`) for one-sided communication.
 - **Boost MPI**: Relies on Boost.MPI's built-in serialization for direct object transfer.
 - **Boost Packed MPI**: Uses Boost's `packed_oarchive` and `packed_iarchive` for manual serialization before transfer.
+
+### 1D Benchmarks (Contiguous Buffer)
+
+The 1D benchmark transfers a simple `std::vector<int>` to measure pure communication cost without serialization overhead:
+
+- **Raw MPI 1D**: Point-to-point transfer using `MPI_Isend`/`MPI_Recv` on a contiguous buffer.
+- **Bcast MPI 1D**: Collective broadcast using `MPI_Bcast` on a contiguous buffer.
+- **RDMA MPI 1D**: One-sided communication using `MPI_Win_create` and `MPI_Get`.
+- **Boost MPI 1D**: Uses `boost::mpi::broadcast` with native `std::vector<int>` support.
 
 ## Data Structure
 
@@ -91,96 +105,181 @@ The benchmark uses [Google Benchmark](https://github.com/google/benchmark) integ
 
 Results below were obtained using [Google Benchmark](https://github.com/google/benchmark) on a 4-process run, compiled with GCC and **-O3** optimization. The metric is the average time per operation.
 
-### Small Data (~11 KB)
+### 2D Results (Nested Vectors)
+
+#### Small Data (~11 KB)
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
-| **Pack MPI**        | 7.1       | 1    |
+| **Pack MPI**        | 7.5       | 1    |
 | **Raw MPI**         | 7.6       | 2    |
-| **RDMA MPI**        | 8.2       | 3    |
-| **Bcast MPI**       | 8.6       | 4    |
-| **Datatype MPI**    | 9.3       | 5    |
-| **Boost Packed MPI**| 12.8      | 6    |
-| **Boost MPI**       | 21.5      | 7    |
+| **RDMA MPI**        | 8.4       | 3    |
+| **Bcast MPI**       | 8.5       | 4    |
+| **Datatype MPI**    | 8.7       | 5    |
+| **Boost Packed MPI**| 12.3      | 6    |
+| **Boost MPI**       | 20.8      | 7    |
 
-### Medium Data (~107 KB)
+#### Medium Data (~107 KB)
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
-| **Bcast MPI**       | 23.9      | 1    |
-| **Datatype MPI**    | 24.9      | 2    |
-| **Raw MPI**         | 25.9      | 3    |
-| **RDMA MPI**        | 42.1      | 4    |
-| **Pack MPI**        | 45.3      | 5    |
-| **Boost Packed MPI**| 61.5      | 6    |
+| **Bcast MPI**       | 24.9      | 1    |
+| **Datatype MPI**    | 25.3      | 2    |
+| **Raw MPI**         | 27.2      | 3    |
+| **RDMA MPI**        | 42.2      | 4    |
+| **Pack MPI**        | 45.4      | 5    |
+| **Boost Packed MPI**| 61.1      | 6    |
 | **Boost MPI**       | 103       | 7    |
 
-### Large Data (~1 MB)
+#### Large Data (~1 MB)
 
 | Communication Method | Time (μs) | Rank |
 |---------------------|----------:|:----:|
-| **Bcast MPI**       | 187       | 1    |
-| **Datatype MPI**    | 192       | 2    |
-| **Pack MPI**        | 280       | 3    |
-| **RDMA MPI**        | 304       | 4    |
-| **Raw MPI**         | 512       | 5    |
-| **Boost Packed MPI**| 534       | 6    |
-| **Boost MPI**       | 810       | 7    |
+| **Datatype MPI**    | 188       | 1    |
+| **Bcast MPI**       | 193       | 2    |
+| **Pack MPI**        | 282       | 3    |
+| **RDMA MPI**        | 306       | 4    |
+| **Raw MPI**         | 510       | 5    |
+| **Boost Packed MPI**| 542       | 6    |
+| **Boost MPI**       | 821       | 7    |
 
-### XLarge Data (~10.5 MB)
+#### XLarge Data (~10.5 MB)
 
 | Communication Method | Time (ms) | Rank |
 |---------------------|----------:|:----:|
-| **Bcast MPI**       | 4.2       | 1    |
+| **Bcast MPI**       | 4.0       | 1    |
 | **Datatype MPI**    | 5.9       | 2    |
-| **RDMA MPI**        | 6.4       | 3    |
-| **Pack MPI**        | 6.5       | 4    |
-| **Raw MPI**         | 10.3      | 5    |
+| **Pack MPI**        | 6.2       | 3    |
+| **RDMA MPI**        | 6.3       | 4    |
+| **Raw MPI**         | 10.5      | 5    |
 | **Boost Packed MPI**| 18.4      | 6    |
-| **Boost MPI**       | 25.1      | 7    |
+| **Boost MPI**       | 25.4      | 7    |
 
-### XXLarge Data (~105 MB)
-
-| Communication Method | Time (ms) | Rank |
-|---------------------|----------:|:----:|
-| **Raw MPI**         | 88        | 1    |
-| **Bcast MPI**       | 90        | 2    |
-| **Datatype MPI**    | 98        | 3    |
-| **Pack MPI**        | 182       | 4    |
-| **RDMA MPI**        | 269       | 5    |
-| **Boost Packed MPI**| 444       | 6    |
-| **Boost MPI**       | 715       | 7    |
-
-### XXXLarge Data (~420 MB)
+#### XXLarge Data (~105 MB)
 
 | Communication Method | Time (ms) | Rank |
 |---------------------|----------:|:----:|
-| **Raw MPI**         | 455       | 1    |
-| **Datatype MPI**    | 505       | 2    |
-| **Bcast MPI**       | 524       | 3    |
-| **Pack MPI**        | 834       | 4    |
-| **Boost Packed MPI**| 2152      | 5    |
-| **Boost MPI**       | 3310      | 6    |
-| **RDMA MPI**        | 3452      | 7    |
+| **Raw MPI**         | 85        | 1    |
+| **Bcast MPI**       | 86        | 2    |
+| **Datatype MPI**    | 99        | 3    |
+| **Pack MPI**        | 179       | 4    |
+| **RDMA MPI**        | 268       | 5    |
+| **Boost Packed MPI**| 452       | 6    |
+| **Boost MPI**       | 705       | 7    |
+
+#### XXXLarge Data (~420 MB)
+
+| Communication Method | Time (ms) | Rank |
+|---------------------|----------:|:----:|
+| **Bcast MPI**       | 496       | 1    |
+| **Raw MPI**         | 501       | 2    |
+| **Datatype MPI**    | 522       | 3    |
+| **Pack MPI**        | 829       | 4    |
+| **Boost Packed MPI**| 2162      | 5    |
+| **Boost MPI**       | 3268      | 6    |
+| **RDMA MPI**        | 3428      | 7    |
+
+### 1D Results (Contiguous Buffer)
+
+These benchmarks measure pure communication cost with a simple `std::vector<int>`.
+
+#### Small Data (~11 KB)
+
+| Communication Method | Time (μs) | Rank |
+|---------------------|----------:|:----:|
+| **Bcast MPI 1D**    | 4.2       | 1    |
+| **Raw MPI 1D**      | 4.2       | 2    |
+| **Boost MPI 1D**    | 7.2       | 3    |
+| **RDMA MPI 1D**     | 7.5       | 4    |
+
+#### Medium Data (~107 KB)
+
+| Communication Method | Time (μs) | Rank |
+|---------------------|----------:|:----:|
+| **Bcast MPI 1D**    | 26.7      | 1    |
+| **Raw MPI 1D**      | 26.9      | 2    |
+| **RDMA MPI 1D**     | 33.9      | 3    |
+| **Boost MPI 1D**    | 46.4      | 4    |
+
+#### Large Data (~1 MB)
+
+| Communication Method | Time (μs) | Rank |
+|---------------------|----------:|:----:|
+| **Bcast MPI 1D**    | 212       | 1    |
+| **RDMA MPI 1D**     | 219       | 2    |
+| **Raw MPI 1D**      | 256       | 3    |
+| **Boost MPI 1D**    | 329       | 4    |
+
+#### XLarge Data (~10.5 MB)
+
+| Communication Method | Time (ms) | Rank |
+|---------------------|----------:|:----:|
+| **Raw MPI 1D**      | 3.7       | 1    |
+| **RDMA MPI 1D**     | 4.5       | 2    |
+| **Bcast MPI 1D**    | 5.1       | 3    |
+| **Boost MPI 1D**    | 8.5       | 4    |
+
+#### XXLarge Data (~105 MB)
+
+| Communication Method | Time (ms) | Rank |
+|---------------------|----------:|:----:|
+| **Raw MPI 1D**      | 52.8      | 1    |
+| **Bcast MPI 1D**    | 70.8      | 2    |
+| **Boost MPI 1D**    | 180       | 3    |
+| **RDMA MPI 1D**     | 211       | 4    |
+
+#### XXXLarge Data (~420 MB)
+
+| Communication Method | Time (ms) | Rank |
+|---------------------|----------:|:----:|
+| **Raw MPI 1D**      | 205       | 1    |
+| **Bcast MPI 1D**    | 359       | 2    |
+| **Boost MPI 1D**    | 891       | 3    |
+| **RDMA MPI 1D**     | 3050      | 4    |
 
 ## Conclusion
+
+### 2D Benchmarks (Nested Vectors)
 
 The optimal communication method **depends on data size**:
 
 - **Small data (< 100 KB)**: **Pack MPI** and **Raw MPI** deliver the best performance.
+- **Medium/Large data (100 KB - 10 MB)**: **Bcast MPI** and **Datatype MPI** become the clear winners.
+- **Very large data (> 100 MB)**: **Raw MPI** and **Bcast MPI** are the fastest methods.
 
-- **Medium/Large data (100 KB - 10 MB)**: **Bcast MPI** and **Datatype MPI** become the clear winners, with collective operations outperforming point-to-point by up to 2.5x.
+### 1D Benchmarks (Contiguous Buffer)
 
-- **Very large data (> 100 MB)**: **Raw MPI** returns as the fastest method, closely followed by Bcast and Datatype MPI.
+- **Small to Medium data (< 1 MB)**: **Bcast MPI** and **Raw MPI** are nearly equivalent.
+- **Large data (> 10 MB)**: **Raw MPI** is consistently the fastest.
+- **Boost MPI 1D** is ~2x faster than Boost MPI 2D for equivalent data sizes (no serialization overhead).
 
-**Key findings:**
-- Native MPI methods consistently outperform Boost.MPI by 3-8x depending on data size.
-- **Boost.MPI** introduces significant serialization overhead that grows dramatically (21 μs for 11 KB → 3.3 sec for 420 MB).
-- **Boost Packed MPI** is ~1.5x faster than Boost.MPI for large data by serializing once and reusing the buffer.
-- **RDMA** becomes extremely slow for very large data (3.5 sec for 420 MB) - likely due to memory copy overhead.
-- For **medium data (100 KB - 10 MB)**, prefer **Bcast MPI** or **Datatype MPI**.
-- For **very large data (> 100 MB)**, prefer **Raw MPI**.
-- For **small, frequent transfers**, **Pack MPI** or **Raw MPI** are recommended.
+### 1D vs 2D Comparison
+
+| Data Size | Best 2D Method | Best 1D Method | 2D/1D Ratio |
+|-----------|---------------|----------------|-------------|
+| 11 KB     | Pack (7.5 μs) | Bcast (4.2 μs) | 1.8x |
+| 107 KB    | Bcast (24.9 μs) | Bcast (26.7 μs) | 0.9x |
+| 1 MB      | Datatype (188 μs) | Bcast (212 μs) | 0.9x |
+| 10 MB     | Bcast (4.0 ms) | Raw (3.7 ms) | 1.1x |
+| 105 MB    | Raw (85 ms) | Raw (52.8 ms) | 1.6x |
+| 420 MB    | Bcast (496 ms) | Raw (205 ms) | 2.4x |
+
+### Key Findings
+
+**2D (Nested Vectors):**
+- Native MPI methods outperform Boost.MPI by 3-8x depending on data size.
+- **Boost.MPI** introduces significant serialization overhead (21 μs for 11 KB → 3.3 sec for 420 MB).
+- **RDMA** becomes extremely slow for very large data (3.4 sec for 420 MB) due to fence overhead.
+
+**1D (Contiguous Buffer):**
+- **Raw MPI** and **Bcast MPI** achieve near-optimal performance for contiguous data.
+- **Boost MPI 1D** has minimal overhead compared to native MPI (no element-by-element serialization).
+- **RDMA** suffers from fence synchronization overhead even for contiguous data (3 sec for 420 MB).
+
+**Recommendations:**
+- For **nested/complex structures**: use **Bcast MPI** or **Datatype MPI**.
+- For **contiguous data**: use **Raw MPI** for large sizes, **Bcast MPI** for small sizes.
+- **Avoid RDMA** for very large data transfers (> 100 MB).
 
 **Note:** These results may vary significantly depending on the MPI implementation (Open MPI, MPICH, Intel MPI, etc.) and the hardware configuration used.
 
