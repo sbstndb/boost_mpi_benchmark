@@ -61,9 +61,11 @@ The 1D benchmark transfers a simple `std::vector<int>` to measure pure communica
 - **RDMA MPI 1D**: One-sided communication using `MPI_Win_create` and `MPI_Get`.
 - **Boost MPI 1D**: Uses `boost::mpi::broadcast` with native `std::vector<int>` support.
 
-## Data Structure
+## Data Structures
 
-The benchmark transfers a `VectorOfVectors` structure containing variably-sized inner vectors. The structure uses a **quadratic formula** to ensure significant size variation (25:1 ratio) at all scales:
+### 2D Structure (VectorOfVectors)
+
+The 2D benchmark transfers a `VectorOfVectors` structure containing variably-sized inner vectors. The structure uses a **quadratic formula** to ensure significant size variation (25:1 ratio) at all scales:
 
 ```
 VectorOfVectors (std::vector<std::vector<int>>)
@@ -81,7 +83,7 @@ VectorOfVectors (std::vector<std::vector<int>>)
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Benchmark Configurations
+#### 2D Configurations
 
 | Config   | base_size | [0] | [1] | [2] | [3] | [4] | Total |
 |----------|-----------|-----|-----|-----|-----|-----|-------|
@@ -91,6 +93,32 @@ VectorOfVectors (std::vector<std::vector<int>>)
 | XLarge   | 50,000    | 50K | 200K | 450K | 800K | 1.25M | **10.5 MB** |
 | XXLarge  | 500,000   | 500K | 2M | 4.5M | 8M | 12.5M | **105 MB** |
 | XXXLarge | 2,000,000 | 2M | 8M | 18M | 32M | 50M | **420 MB** |
+
+### 1D Structure (Contiguous Buffer)
+
+The 1D benchmark uses a simple `std::vector<int>` with the **same total number of elements** as the 2D benchmarks to enable fair comparison:
+
+```
+Vector1D (std::vector<int>)
+┌─────────────────────────────────────────────────────────────┐
+│              Contiguous Integer Buffer                      │
+├─────────────────────────────────────────────────────────────┤
+│ [0] [1] [2] ... [array_size - 1]                            │
+│                                                             │
+│ array_size = base_size × 55 (matching 2D total)             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 1D Configurations
+
+| Config   | array_size | Total |
+|----------|------------|-------|
+| Small    | 2,750      | **11 KB** |
+| Medium   | 27,500     | **107 KB** |
+| Large    | 275,000    | **1.05 MB** |
+| XLarge   | 2,750,000  | **10.5 MB** |
+| XXLarge  | 27,500,000 | **105 MB** |
+| XXXLarge | 110,000,000| **420 MB** |
 
 ## Benchmarking Methodology
 
